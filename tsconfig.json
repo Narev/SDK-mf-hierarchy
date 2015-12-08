@@ -1,0 +1,12 @@
+{
+    "compilerOptions" : {
+       "module" : "commonjs",
+       "target" : "es5"
+   },
+   "files" : [
+       "FileWriter.ts",
+       "script.ts",
+       "script-open.ts",
+       "script-promise.ts"
+   ]
+}

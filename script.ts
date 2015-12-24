@@ -8,16 +8,17 @@ import { ModelSdkClient, IModel, projects, domainmodels, microflows, pages, navi
 import when = require("when");
 import fs = require("fs");
 import fw = require("./FileWriter");
+import cred = require("./Credentials");
 
 
 //const readlineSync = require('readline-sync');
 
 /*
-* CREDENTIALS
+* CREDENTIALS from separate file so we can't accidentally add these to github
 */
+var username = cred.Credentials.username;
+const apikey = cred.Credentials.apikey
 
-var username = "jasper.van.der.hoek@mendix.com";
-var apikey = "b5085ff6-6b57-45a2-8060-49b5c0e651f5";
 // var projectId = "acf09205-006a-499b-a1a3-4b3a1dc543af";
 // var projectName = "HR-US";
 // var branchName = "SDK-Test"; // null for mainline

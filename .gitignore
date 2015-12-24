@@ -7,3 +7,5 @@ script-fileWriter.js
 output.txt
 *.txt
 FileWriter.js
+Credentials.js
+Credentials.ts

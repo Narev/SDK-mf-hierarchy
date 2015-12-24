@@ -15,14 +15,13 @@ export class FileWriter {
 
       fs.stat(this.fileLocation, function(err, stat) {
           if(err == null) {
-            var newName = (new Date()).toString() + this.fileLocation;
+            var d =  (new Date());
+            var newName = location.substr(0, location.lastIndexOf(".")) + d.getFullYear()+d.getMonth() + d.getDate() + "-" + d.getHours() + d.getMinutes() + location.substr(location.lastIndexOf("."));
               console.log("File exists, renaming: " + newName );
-              fs.rename( this.fileLocation, newName );
-          } else
-          //  if(err.code == "ENOENT") {
-          //     fs.writeFile('log.txt', 'Some log\n');
-          // } else
-           {
+              fs.rename( location, newName );
+          } else if(err.code == "ENOENT") {
+              // fs.writeFile('log.txt', 'Some log\n');
+          } else {
               console.log("Some other error: ", err.code);
           }
         });

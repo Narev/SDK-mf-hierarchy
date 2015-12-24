@@ -1,20 +1,23 @@
 /// <reference path='./typings/tsd.d.ts' />
 /// <reference path="./typings/node/node.d.ts" />
+/// <reference path="./FileWriter.ts"/>
+/// <reference path="./Credentials.ts"/>
 
 import { MendixSdkClient, OnlineWorkingCopy, Project, Revision, Branch } from "mendixplatformsdk";
 import { ModelSdkClient, IModel, projects, domainmodels, microflows, pages, navigation, texts } from "mendixmodelsdk";
 
 import when = require("when");
 import fs = require("fs");
-
+import fw = require("./FileWriter");
+import cred = require("./Credentials");
+const mapLimit = require('map-limit');
 //const readlineSync = require('readline-sync');
 
 /*
-* CREDENTIALS
+* CREDENTIALS from separate file so we can't accidentally add these to github
 */
-
-var username = "jasper.van.der.hoek@mendix.com";
-var apikey = "b5085ff6-6b57-45a2-8060-49b5c0e651f5";
+var username = cred.Credentials.username;
+const apikey = cred.Credentials.apikey
 // var projectId = "acf09205-006a-499b-a1a3-4b3a1dc543af";
 // var projectName = "HR-US";
 // var branchName = "SDK-Test"; // null for mainline
@@ -30,10 +33,8 @@ var mfNameList:Array<string> = []; //["HR.MB_SaveAndSubmitAbsenceRequest", "HR.M
 
 const client = new MendixSdkClient(username, apikey);
 
-var fileLocation = "./output.txt";
-var stream = fs.createWriteStream(fileLocation);
-stream.write( "depth,currentMf,sequence,type,action,callsMf\r\n");
-
+var fileLocation = "./mfHierarchy.txt";
+var fW =  new fw.FileWriter(fileLocation);
 
 // This is the local file that will be imported into the Online Working Copy.
 const templateFileName = 'CLS.mpk';
@@ -47,18 +48,22 @@ let modelSDKClient = new MendixSdkClient(username, apikey);
 
 // this is the ID of a previously created WorkingCopy. If this one does not exist anymore. The script will create a new one.
 // After creating the new one, you can copy the id here
-let workingCopyID = "1e6d0983-de41-4686-90e9-fc00780b0769";
+let workingCopyID = "d82adc47-752e-4e28-a8f6-89eb9c90ebb5";
 
 openWorkingCopyOrCreateNewInstance(workingCopyID,templateFileName,
   model => {
         console.log("Successfully opened app.");
         var microflows = model.allMicroflows();
-        loadAllMicroflows(microflows)
-        .done(microflows => checkHierarchy(microflows));
 
+        checkHierarchy(microflows, microflows.length);
+        model.closeConnection(() => console.log('Closed connection.'))
 
+        // loadAllMicroflows(microflows)
+        // .done(microflows => {
+        //     checkHierarchy(microflows, microflows.length);
+        //     model.closeConnection(() => console.log('Closed connection.'))
+        //   } );
 
-        model.closeConnection(() => console.log('Closed connection.'));
     }
  );
 
@@ -76,13 +81,13 @@ openWorkingCopyOrCreateNewInstance(workingCopyID,templateFileName,
                 createWorkingCopy(templateFileName, callback);
             } else {
                 // Some other error, give up...
-                errorHandler(error);
+                errorHandler("openWorkingCopy", error);
             }
         });
 }
 
-function errorHandler(error) {
-    console.error('Something went wrong: %s', error);
+function errorHandler(cause, error) {
+    console.error('Something went wrong in %s: %s', cause, error);
     console.dir(error);
 }
 
@@ -97,15 +102,29 @@ function createWorkingCopy(templateFileName: string, callback: (model: IModel) =
             avatarUrl: 'avatar'
         },
         callback,
-        errorHandler);
+        error => {
+            console.error('Something went wrong creating WC: %s', error);
+            console.dir(error);
+        });
 }
 
-  function checkHierarchy(microflowList: microflows.Microflow[]) {
-    microflowList.forEach((flow) => {
-      if ( mfNameList.length == 0 || mfNameList.indexOf(flow.qualifiedName) >= 0 ) {
-        checkSingleFlow( flow, null, null, 0 );
+  function checkHierarchy(microflowList: microflows.IMicroflow[], length:number, pos:number=0) {
+
+    var flow:microflows.IMicroflow = microflowList[pos];
+    loadMicroflow(flow).done( mf => {
+      checkSingleFlow(mf, null, null, 0);
+      pos++;
+      if ( pos < length ) {
+        checkHierarchy(microflowList, length, pos);
       }
-    });
+    } );
+
+    // microflowList.forEach((flow) => {
+    //   if ( mfNameList.length == 0 || mfNameList.indexOf(flow.qualifiedName) >= 0 ) {
+    //     // checkSingleFlow(<microflows.Microflow>flow, null, null, 0);
+    //     loadMicroflow(flow).done( mf => { checkSingleFlow(mf, null, null, 0); } );
+    //   }
+    // });
   } //END - checkHierarchy
 
 
@@ -116,7 +135,10 @@ function createWorkingCopy(templateFileName: string, callback: (model: IModel) =
       console.log( "Skipping, already checked: " + microflow.qualifiedName );
       return;
     }
+    else
+      evaluatedMFs[microflow.id] = true;
 
+    writeToFile( microflow, microflow.objectCollection.objects.length, null, null, null, null );
     var flows: { [originid: string]: microflows.SequenceFlow[] } = {};
 
     microflow.flows.forEach(f => {
@@ -181,24 +203,24 @@ function createWorkingCopy(templateFileName: string, callback: (model: IModel) =
       if (actionCall instanceof microflows.AppServiceCallAction) {
         console.log( actionCall.toPlainJson() );
         logIndent(depth, parentMfObject, "Call AppService: " + actionCall.appServiceActionQualifiedName );
-        writeToFile( depth, sequence, microflow, "appservice", actionCall.appServiceActionQualifiedName, actionCall.appServiceAction.container.moduleName, actionCall.appServiceAction.container.name + "/" + actionCall.appServiceAction.name );
+        writeToFile( microflow, sequence, "appservice", actionCall.appServiceActionQualifiedName, actionCall.appServiceAction.container.moduleName, actionCall.appServiceAction.container.name + "/" + actionCall.appServiceAction.name );
 
       }
       else if (actionCall instanceof microflows.WebServiceCallAction) {
         logIndent(depth, parentMfObject, "Call WebService: " + actionCall.serviceName + "/" + actionCall.operationName );
-        writeToFile( depth, sequence, microflow, "webservice", actionCall.serviceName + "/" + actionCall.operationName, actionCall.importedWebService.moduleName, actionCall.importedWebService.qualifiedName + "/" + actionCall.operationName );
+        writeToFile( microflow, sequence, "webservice", actionCall.serviceName + "/" + actionCall.operationName, actionCall.importedWebService.moduleName, actionCall.importedWebService.qualifiedName + "/" + actionCall.operationName );
 
       }
       else if ( actionCall instanceof microflows.JavaActionCallAction) {
         logIndent( depth, parentMfObject, "[JAVA] " + actionCall.javaActionQualifiedName );
-        writeToFile( depth, sequence, microflow, "java", (caption ==null? actionCall.javaActionQualifiedName:caption), actionCall.javaAction.moduleName, actionCall.javaAction.name );
+        writeToFile( microflow, sequence, "java", (caption ==null? actionCall.javaActionQualifiedName:caption), actionCall.javaAction.moduleName, actionCall.javaAction.name );
 
       }
       else if ( actionCall instanceof microflows.MicroflowCallAction ) {
         logIndent( depth, parentMfObject, "[MF] " + actionCall.microflowCall.microflowQualifiedName );
-        writeToFile( depth, sequence, microflow, "microflow", (caption ==null ? actionCall.microflowCall.microflowQualifiedName :caption), actionCall.microflowCall.microflow.moduleName, actionCall.microflowCall.microflow.name );
+        writeToFile( microflow, sequence, "microflow", (caption ==null ? actionCall.microflowCall.microflowQualifiedName :caption), actionCall.microflowCall.microflow.moduleName, actionCall.microflowCall.microflow.name );
         // var loadedFlow = loadMicroflow( actionCall.microflowCall.microflow );
-        checkSingleFlow((<microflows.Microflow>actionCall.microflowCall.microflow), microflow.qualifiedName, parentMfObject, 1+depth);
+        loadMicroflow(actionCall.microflowCall.microflow).done( mf => { checkSingleFlow(mf, microflow.qualifiedName, parentMfObject, 1+depth); } );
 
       }
     }
@@ -209,13 +231,36 @@ function createWorkingCopy(templateFileName: string, callback: (model: IModel) =
     // console.log("        " + indent + "||" + ( parentMfObject != null ? parentMfObject.qualifiedName : "    " ) + "|" + Array(indent + 1).join(" ") + message);
   }
 
-  function writeToFile(indent: number, sequence:number, currentMf:microflows.Microflow, type:string, actionName:string, callsActionModule:string, callsActionName:string ) {
-    var msg = indent + "," + (currentMf!=null? currentMf.moduleName :"") + "," + (currentMf!=null? currentMf.name :"") + "," + sequence + "," +  type + "," + actionName + "," + callsActionModule + "," + callsActionName;
+  function writeToFile( currentMf:microflows.Microflow, sequence:number, type:string, actionCaption:string, callsActionModule:string, callsActionName:string ) {
+    var msg =
+      (currentMf!=null? currentMf.moduleName :"") + "," +
+      (currentMf!=null? currentMf.name :"") + "," +
+      (sequence!=null? sequence :"") + "," +
+      (type!=null? type :"")  + "," +
+      (actionCaption!=null? actionCaption :"")  + "," +
+      (callsActionModule!=null? callsActionModule :"")  + "," +
+      (callsActionName!=null? callsActionName :"");
 
         console.log(msg);
-        stream.write(msg + "\r\n");
+        fW.appendLine( msg );
   }
-
+  var counter = 0;
+  // function loadAllMicroflows(microflows: microflows.IMicroflow[]): when.Promise<microflows.Microflow[]> {
+  //     return when.promise( function(resolve, reject, notify) {
+  //         mapLimit(microflows, 100, function(mf, itemCallback) {
+  //           //  mf.load(data => itemCallback(null, data));
+  //             counter = counter+1;
+  //             console.log(`Start loading microflow ${counter}: ${mf.qualifiedName}`);
+  //            mf.load(mf => itemCallback(null, mf));
+  //         }, (err, results) => {
+  //           if (err)
+  //             reject(err)
+  //           else
+  //             resolve(results);
+  //         });
+  //     });
+  //
+  //  }
 
   function loadAllMicroflows(microflows: microflows.IMicroflow[]): when.Promise<microflows.Microflow[]> {
     return when.all<microflows.Microflow[]>(microflows.map(loadMicroflow));
@@ -224,16 +269,22 @@ function createWorkingCopy(templateFileName: string, callback: (model: IModel) =
   function loadMicroflow(microflow: microflows.IMicroflow): when.Promise<microflows.Microflow> {
     return when.promise<microflows.Microflow>((resolve, reject) => {
       if (microflow) {
-        console.log(`Loading microflow: ${microflow.qualifiedName}`);
-        microflow.load(mf => {
-          if (mf) {
-            console.log(`Loaded microflow: ${microflow.qualifiedName}`);
-            resolve(mf);
-          } else {
-            console.log(`Failed to load microflow: ${microflow.qualifiedName}`);
-            reject(`Failed to load microflow: ${microflow.qualifiedName}`);
-          }
-        });
+        if ( microflow.isLoaded ) {
+          resolve(<microflows.Microflow>microflow);
+        }
+        else {
+          var count = ++counter;
+            console.log(`Loading microflow ${count}: ${microflow.qualifiedName}`);
+          microflow.load(mf => {
+            if (mf) {
+              console.log(`Loaded microflow ${count}: ${microflow.qualifiedName}`);
+              resolve(mf);
+            } else {
+              console.log(`Failed to load microflow ${count}: ${microflow.qualifiedName}`);
+              reject(`Failed to load microflow ${count}: ${microflow.qualifiedName}`);
+            }
+          });
+        }
       } else {
         reject(`'microflow' is undefined`);
       }
